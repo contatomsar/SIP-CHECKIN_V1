@@ -1,0 +1,609 @@
+<!doctype html>
+<!--
+  SIP-INVOZ — Check-in por Câmera (página externa GitHub Pages)
+  ============================================================
+  Esta página roda em contexto TOP-LEVEL (github.io), onde a câmera funciona.
+  Comunica-se com o backend Apps Script via fetch para registrar presença.
+
+  CONFIGURAÇÃO OBRIGATÓRIA ANTES DO DEPLOY:
+    Edite a constante ENDPOINT_URL abaixo com a URL /exec do seu deploy
+    Apps Script (o mesmo deploy que serve ?p=admin).
+
+  MSAR — Desenvolvimento Tecnológico · São José dos Campos, SP
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0A2540">
+<title>Check-in por Câmera · SIP-INVOZ</title>
+
+<!-- html5-qrcode: scanner contínuo de QR via câmera -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<style>
+  :root {
+    --noite: #0A2540;
+    --cobalto: #1E5AA8;
+    --cobalto-light: #2E6FC0;
+    --cobalto-bg: #DBEAFE;
+    --ouro: #D4A017;
+    --ouro-light: #E8B930;
+    --ouro-bg: #FEF9E7;
+    --sucesso: #1B7A4E;
+    --sucesso-bg: #E8F5E9;
+    --erro: #C62828;
+    --erro-bg: #FFEBEE;
+    --aviso: #B7791F;
+    --aviso-bg: #FFF8E1;
+    --cinza-100: #F5F7FA;
+    --cinza-200: #E2E8F0;
+    --cinza-500: #64748B;
+    --cinza-700: #334155;
+    --radius: 12px;
+    --shadow: 0 2px 12px rgba(10,37,64,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--cinza-100);
+    color: var(--noite);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  body { display: flex; flex-direction: column; }
+
+  /* ── Cabeçalho ── */
+  .topo {
+    background: var(--noite);
+    color: #fff;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .topo-titulo { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+  .topo-sub { font-size: 11px; color: var(--ouro-light); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+  .badge-conexao {
+    font-size: 11px; padding: 4px 10px; border-radius: 20px;
+    font-weight: 600; white-space: nowrap;
+  }
+  .badge-online { background: var(--sucesso); color: #fff; }
+  .badge-offline { background: var(--erro); color: #fff; }
+  .badge-aguardando { background: var(--cinza-500); color: #fff; }
+
+  /* ── Container ── */
+  .container { flex: 1; width: 100%; max-width: 560px; margin: 0 auto; padding: 16px; }
+
+  .cartao {
+    background: #fff;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .cartao h2 { font-size: 15px; margin-bottom: 12px; color: var(--noite); }
+  .cartao h2 .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--cobalto); color: #fff; font-size: 12px;
+    margin-right: 8px; vertical-align: middle;
+  }
+
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--cinza-700); }
+  input, select {
+    width: 100%; padding: 11px 12px;
+    border: 1.5px solid var(--cinza-200); border-radius: 8px;
+    font-size: 15px; background: #fff; color: var(--noite);
+    transition: border-color 0.15s;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--cobalto); }
+  .aux { font-size: 12px; color: var(--cinza-500); line-height: 1.5; }
+  .mt-sm { margin-top: 8px; }
+  .mt-md { margin-top: 14px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 12px 18px; border: none; border-radius: 8px;
+    font-size: 15px; font-weight: 600; cursor: pointer;
+    transition: filter 0.15s, transform 0.05s; width: 100%;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primario { background: var(--cobalto); color: #fff; }
+  .btn-primario:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn-ouro { background: var(--ouro); color: var(--noite); }
+  .btn-ouro:hover:not(:disabled) { filter: brightness(1.05); }
+  .btn-outline { background: #fff; color: var(--cobalto); border: 1.5px solid var(--cobalto); }
+  .btn-perigo { background: var(--erro); color: #fff; }
+  .btn-fantasma { background: transparent; color: var(--cinza-500); border: 1.5px solid var(--cinza-200); }
+
+  /* ── Scanner ── */
+  #leitor {
+    width: 100%; border-radius: var(--radius); overflow: hidden;
+    background: #000; margin-bottom: 12px; min-height: 0;
+  }
+  #leitor video { width: 100% !important; display: block; }
+  /* Esconde a interface padrão verborrágica do html5-qrcode */
+  #leitor img[alt="Info icon"] { display: none; }
+  #leitor__dashboard_section_csr span { font-size: 13px !important; }
+  #leitor__status_span { display: none !important; }
+  #leitor__dashboard_section_swaplink { color: var(--cobalto) !important; }
+
+  /* ── Resultado ── */
+  .resultado {
+    border-radius: var(--radius); padding: 20px; text-align: center;
+    margin-bottom: 16px; animation: surge 0.25s ease-out;
+  }
+  @keyframes surge { from { opacity: 0; transform: translateY(-8px) scale(0.98); } to { opacity: 1; transform: none; } }
+  .resultado .icone { font-size: 48px; line-height: 1; margin-bottom: 8px; }
+  .resultado .nome { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .resultado .msg { font-size: 14px; }
+  .res-ok { background: var(--sucesso-bg); border: 2px solid var(--sucesso); }
+  .res-ok .nome { color: var(--sucesso); }
+  .res-dup { background: var(--aviso-bg); border: 2px solid var(--aviso); }
+  .res-dup .nome { color: var(--aviso); }
+  .res-erro { background: var(--erro-bg); border: 2px solid var(--erro); }
+  .res-erro .nome { color: var(--erro); }
+
+  /* ── Estatísticas ── */
+  .stats { display: flex; gap: 10px; margin-bottom: 16px; }
+  .stat {
+    flex: 1; background: #fff; border-radius: 10px; padding: 14px 10px;
+    text-align: center; box-shadow: var(--shadow);
+  }
+  .stat .valor { font-size: 28px; font-weight: 700; color: var(--cobalto); line-height: 1; }
+  .stat .rotulo { font-size: 11px; color: var(--cinza-500); text-transform: uppercase; margin-top: 4px; letter-spacing: 0.03em; }
+
+  .oculto { display: none !important; }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--noite); color: #fff; padding: 12px 20px;
+    border-radius: 24px; font-size: 14px; z-index: 999;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25); max-width: 90vw;
+    opacity: 0; transition: opacity 0.2s; pointer-events: none;
+  }
+  #toast.mostrar { opacity: 1; }
+
+  /* ── Rodapé ── */
+  .rodape {
+    text-align: center; padding: 16px; font-size: 11px; color: var(--cinza-500);
+    border-top: 1px solid var(--cinza-200); margin-top: auto;
+  }
+  .divisor-ouro { height: 3px; background: linear-gradient(90deg, var(--cobalto), var(--ouro)); }
+</style>
+</head>
+<body>
+
+<div class="topo">
+  <div>
+    <div class="topo-titulo">Check-in por Câmera</div>
+    <div class="topo-sub">VI Congresso INVOZ · SIP</div>
+  </div>
+  <span id="badge-conexao" class="badge-conexao badge-aguardando">verificando…</span>
+</div>
+<div class="divisor-ouro"></div>
+
+<div class="container">
+
+  <!-- ETAPA 1: Autenticação -->
+  <section class="cartao" id="etapa-auth">
+    <h2><span class="num">1</span>Identificação do operador</h2>
+    <label for="campo-token">Token de check-in</label>
+    <input type="password" id="campo-token" placeholder="Cole o token fornecido pelo admin" autocomplete="off">
+    <label for="campo-operador" class="mt-md">Seu nome (para o registro)</label>
+    <input type="text" id="campo-operador" placeholder="Ex: João Silva" autocomplete="name">
+    <button class="btn btn-primario mt-md" id="btn-conectar">Conectar</button>
+    <p class="aux mt-sm">O token e seu nome ficam salvos neste aparelho até você sair.</p>
+  </section>
+
+  <!-- ETAPA 2: Seleção de evento + scanner -->
+  <section class="oculto" id="etapa-operacao">
+
+    <div class="stats">
+      <div class="stat">
+        <div class="valor" id="stat-sessao">0</div>
+        <div class="rotulo">Esta sessão</div>
+      </div>
+      <div class="stat">
+        <div class="valor" id="stat-duplicados">0</div>
+        <div class="rotulo">Já presentes</div>
+      </div>
+    </div>
+
+    <section class="cartao">
+      <h2><span class="num">2</span>Evento atual</h2>
+      <select id="seletor-evento">
+        <option value="">Carregando eventos…</option>
+      </select>
+      <p class="aux mt-sm">Selecione o evento antes de escanear. Todos os check-ins serão atribuídos a ele.</p>
+    </section>
+
+    <section class="cartao">
+      <h2><span class="num">3</span>Scanner</h2>
+      <div id="leitor"></div>
+      <div id="resultado-area"></div>
+      <button class="btn btn-ouro" id="btn-iniciar" disabled>📷 Iniciar scanner</button>
+      <button class="btn btn-fantasma mt-sm oculto" id="btn-parar">⏹ Pausar scanner</button>
+    </section>
+
+    <section class="cartao">
+      <h2>Busca manual</h2>
+      <p class="aux" style="margin-bottom:10px">Use quando o QR não estiver disponível.</p>
+      <label for="campo-busca-protocolo">Protocolo do participante</label>
+      <input type="text" id="campo-busca-protocolo" placeholder="Ex: SIP-A3B7K9M2">
+      <p class="aux mt-sm">A busca manual por protocolo requer o token do QR. Para busca por nome, use o painel admin no computador.</p>
+    </section>
+
+    <button class="btn btn-fantasma" id="btn-sair">Sair / trocar operador</button>
+  </section>
+
+</div>
+
+<div class="rodape">
+  MSAR — Desenvolvimento Tecnológico · São José dos Campos, SP — Brasil<br>
+  SIP-INVOZ · Check-in por câmera v1.0
+</div>
+
+<div id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   CONFIGURAÇÃO — EDITE AQUI ANTES DO DEPLOY
+   ═══════════════════════════════════════════════════════════════════ */
+
+// URL /exec do deploy Apps Script (mesmo deploy que serve ?p=admin).
+// Exemplo: 'https://script.google.com/macros/s/AKfycb.../exec'
+var ENDPOINT_URL = 'COLE_AQUI_A_URL_EXEC_DO_APPS_SCRIPT';
+
+/* ═══════════════════════════════════════════════════════════════════ */
+
+var LS_TOKEN = 'sip_checkin_token';
+var LS_OPERADOR = 'sip_checkin_operador';
+
+var estado = {
+  token: '',
+  operador: '',
+  eventoSlug: '',
+  scanner: null,
+  scannerAtivo: false,
+  ultimoQR: '',
+  ultimoQRtempo: 0,
+  contadores: { sessao: 0, duplicados: 0 }
+};
+
+function $(id) { return document.getElementById(id); }
+
+function toast(msg, ms) {
+  var t = $('toast');
+  t.textContent = msg;
+  t.classList.add('mostrar');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(function() { t.classList.remove('mostrar'); }, ms || 2600);
+}
+
+function setConexao(estadoConex) {
+  var b = $('badge-conexao');
+  b.className = 'badge-conexao';
+  if (estadoConex === 'online') { b.classList.add('badge-online'); b.textContent = '● conectado'; }
+  else if (estadoConex === 'offline') { b.classList.add('badge-offline'); b.textContent = '○ sem conexão'; }
+  else { b.classList.add('badge-aguardando'); b.textContent = 'verificando…'; }
+}
+
+// ─── Comunicação com o backend ──────────────────────────────────────
+// Usa text/plain para evitar preflight CORS (Apps Script não responde OPTIONS).
+function chamarAPI(payload) {
+  return fetch(ENDPOINT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload),
+    redirect: 'follow'
+  }).then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  });
+}
+
+// ─── Ping de conectividade ──────────────────────────────────────────
+function verificarConexao() {
+  if (ENDPOINT_URL.indexOf('COLE_AQUI') === 0) {
+    setConexao('offline');
+    toast('Endpoint não configurado. Edite ENDPOINT_URL na página.', 4000);
+    return;
+  }
+  chamarAPI({ acao: 'ping', token: estado.token })
+    .then(function(r) {
+      if (r && r.ok) setConexao('online');
+      else setConexao('offline');
+    })
+    .catch(function() { setConexao('offline'); });
+}
+
+// ─── Autenticação ───────────────────────────────────────────────────
+function conectar() {
+  var token = $('campo-token').value.trim();
+  var operador = $('campo-operador').value.trim();
+  if (!token) { toast('Cole o token de check-in.'); return; }
+  if (!operador) { toast('Informe seu nome.'); return; }
+
+  estado.token = token;
+  estado.operador = operador;
+
+  $('btn-conectar').disabled = true;
+  $('btn-conectar').textContent = 'Verificando…';
+
+  // Testa o token buscando eventos
+  chamarAPI({ acao: 'eventos', token: token })
+    .then(function(r) {
+      $('btn-conectar').disabled = false;
+      $('btn-conectar').textContent = 'Conectar';
+      if (!r || !r.ok) {
+        toast(r && r.erro || 'Token inválido.', 3500);
+        setConexao('offline');
+        return;
+      }
+      // Token válido — salva e entra na operação
+      try {
+        localStorage.setItem(LS_TOKEN, token);
+        localStorage.setItem(LS_OPERADOR, operador);
+      } catch (e) {}
+      setConexao('online');
+      preencherEventos(r.eventos || []);
+      $('etapa-auth').classList.add('oculto');
+      $('etapa-operacao').classList.remove('oculto');
+      toast('Conectado como ' + operador, 2000);
+    })
+    .catch(function(err) {
+      $('btn-conectar').disabled = false;
+      $('btn-conectar').textContent = 'Conectar';
+      setConexao('offline');
+      toast('Falha de conexão. Verifique a internet.', 3500);
+    });
+}
+
+function preencherEventos(eventos) {
+  var sel = $('seletor-evento');
+  if (!eventos.length) {
+    sel.innerHTML = '<option value="">Nenhum evento disponível</option>';
+    return;
+  }
+  var grupos = {};
+  eventos.forEach(function(e) {
+    var g = e.grupo || 'Eventos';
+    if (!grupos[g]) grupos[g] = [];
+    grupos[g].push(e);
+  });
+  var html = '<option value="">— Selecione o evento —</option>';
+  Object.keys(grupos).forEach(function(g) {
+    html += '<optgroup label="' + g + '">';
+    grupos[g].forEach(function(e) {
+      html += '<option value="' + e.slug + '">' + e.label + '</option>';
+    });
+    html += '</optgroup>';
+  });
+  sel.innerHTML = html;
+}
+
+// ─── Scanner de câmera ──────────────────────────────────────────────
+function iniciarScanner() {
+  if (!estado.eventoSlug) { toast('Selecione o evento primeiro.'); return; }
+  if (estado.scannerAtivo) return;
+
+  if (typeof Html5Qrcode === 'undefined') {
+    toast('Biblioteca de scanner não carregou. Verifique a internet.', 3500);
+    return;
+  }
+
+  estado.scanner = new Html5Qrcode('leitor', { verbose: false });
+  var config = {
+    fps: 10,
+    qrbox: function(vw, vh) {
+      var menor = Math.min(vw, vh);
+      var lado = Math.floor(menor * 0.7);
+      return { width: lado, height: lado };
+    },
+    aspectRatio: 1.0,
+    rememberLastUsedCamera: true,
+    formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE]
+  };
+
+  estado.scanner.start(
+    { facingMode: 'environment' },
+    config,
+    onQRSucesso,
+    function(erroLeitura) { /* silencioso: frames sem QR */ }
+  ).then(function() {
+    estado.scannerAtivo = true;
+    $('btn-iniciar').classList.add('oculto');
+    $('btn-parar').classList.remove('oculto');
+  }).catch(function(err) {
+    var msg = String(err || '');
+    if (msg.indexOf('NotAllowed') >= 0 || msg.indexOf('Permission') >= 0) {
+      toast('Permissão de câmera negada. Autorize nas configurações do navegador.', 4000);
+    } else if (msg.indexOf('NotFound') >= 0) {
+      toast('Nenhuma câmera encontrada neste aparelho.', 3500);
+    } else {
+      toast('Não foi possível abrir a câmera: ' + msg, 4000);
+    }
+  });
+}
+
+function pararScanner() {
+  if (estado.scanner && estado.scannerAtivo) {
+    estado.scanner.stop().then(function() {
+      estado.scanner.clear();
+      estado.scannerAtivo = false;
+      $('btn-iniciar').classList.remove('oculto');
+      $('btn-parar').classList.add('oculto');
+    }).catch(function() {});
+  }
+}
+
+function onQRSucesso(textoDecodificado) {
+  // Debounce: ignora leitura repetida do mesmo QR em <3s
+  var agora = Date.now();
+  if (textoDecodificado === estado.ultimoQR && (agora - estado.ultimoQRtempo) < 3000) return;
+  estado.ultimoQR = textoDecodificado;
+  estado.ultimoQRtempo = agora;
+
+  // Extrai protocolo (pr) e token (k) da URL do QR
+  var mProt = /[?&]pr=([^&]+)/.exec(textoDecodificado);
+  var mTok = /[?&]k=([^&]+)/.exec(textoDecodificado);
+  if (!mProt) {
+    mostrarResultado('erro', 'QR inválido', 'Este código não é um QR do SIP-INVOZ.');
+    bipErro();
+    return;
+  }
+  var protocolo = decodeURIComponent(mProt[1]);
+  var qrToken = mTok ? decodeURIComponent(mTok[1]) : '';
+
+  registrarPresenca(protocolo, qrToken);
+}
+
+function registrarPresenca(protocolo, qrToken) {
+  chamarAPI({
+    acao: 'checkin',
+    token: estado.token,
+    protocolo: protocolo,
+    qrToken: qrToken,
+    evento_slug: estado.eventoSlug,
+    operador: estado.operador
+  }).then(function(r) {
+    if (!r || !r.ok) {
+      mostrarResultado('erro', 'Erro', r && r.erro || 'Falha ao registrar.');
+      bipErro();
+      return;
+    }
+    var nome = (r.participante && r.participante.nome) || 'Participante';
+    if (r.duplicado) {
+      estado.contadores.duplicados++;
+      atualizarStats();
+      mostrarResultado('dup', nome, r.mensagem || 'Já fez check-in.');
+      bipDuplicado();
+    } else {
+      estado.contadores.sessao++;
+      atualizarStats();
+      mostrarResultado('ok', nome, 'Check-in confirmado!');
+      bipSucesso();
+    }
+  }).catch(function(err) {
+    mostrarResultado('erro', 'Sem conexão', 'Não foi possível registrar. Tente de novo.');
+    setConexao('offline');
+    bipErro();
+  });
+}
+
+function mostrarResultado(tipo, nome, msg) {
+  var icones = { ok: '✅', dup: '⚠️', erro: '❌' };
+  var classes = { ok: 'res-ok', dup: 'res-dup', erro: 'res-erro' };
+  var div = $('resultado-area');
+  div.innerHTML =
+    '<div class="resultado ' + classes[tipo] + '">' +
+      '<div class="icone">' + icones[tipo] + '</div>' +
+      '<div class="nome">' + escapar(nome) + '</div>' +
+      '<div class="msg">' + escapar(msg) + '</div>' +
+    '</div>';
+  // Limpa após 4s para não poluir a próxima leitura
+  clearTimeout(div._timer);
+  div._timer = setTimeout(function() { div.innerHTML = ''; }, 4000);
+}
+
+// ─── Feedback sonoro (Web Audio, sem arquivos) ──────────────────────
+var audioCtx = null;
+function bip(freq, dur, tipo) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    var osc = audioCtx.createOscillator();
+    var gain = audioCtx.createGain();
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.type = tipo || 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    osc.start(); osc.stop(audioCtx.currentTime + dur);
+  } catch (e) {}
+}
+function bipSucesso() { bip(880, 0.12); setTimeout(function() { bip(1175, 0.12); }, 80); }
+function bipDuplicado() { bip(520, 0.18, 'triangle'); }
+function bipErro() { bip(220, 0.3, 'sawtooth'); }
+
+function atualizarStats() {
+  $('stat-sessao').textContent = estado.contadores.sessao;
+  $('stat-duplicados').textContent = estado.contadores.duplicados;
+}
+
+function escapar(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function sair() {
+  if (!confirm('Sair e limpar o token deste aparelho?')) return;
+  pararScanner();
+  try { localStorage.removeItem(LS_TOKEN); localStorage.removeItem(LS_OPERADOR); } catch (e) {}
+  estado.token = ''; estado.operador = '';
+  $('campo-token').value = '';
+  $('etapa-operacao').classList.add('oculto');
+  $('etapa-auth').classList.remove('oculto');
+  setConexao('aguardando');
+}
+
+// ─── Eventos da UI ──────────────────────────────────────────────────
+$('btn-conectar').addEventListener('click', conectar);
+$('campo-token').addEventListener('keydown', function(e) { if (e.key === 'Enter') $('campo-operador').focus(); });
+$('campo-operador').addEventListener('keydown', function(e) { if (e.key === 'Enter') conectar(); });
+
+$('seletor-evento').addEventListener('change', function(e) {
+  estado.eventoSlug = e.target.value;
+  $('btn-iniciar').disabled = !estado.eventoSlug;
+  if (estado.eventoSlug && !estado.scannerAtivo) {
+    toast('Evento selecionado. Toque em Iniciar scanner.', 2000);
+  }
+});
+
+$('btn-iniciar').addEventListener('click', iniciarScanner);
+$('btn-parar').addEventListener('click', pararScanner);
+$('btn-sair').addEventListener('click', sair);
+
+$('campo-busca-protocolo').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    var prot = e.target.value.trim();
+    if (!prot) return;
+    if (!estado.eventoSlug) { toast('Selecione o evento primeiro.'); return; }
+    toast('Busca manual por protocolo requer o token do QR. Use o scanner ou o painel admin.', 4000);
+  }
+});
+
+// ─── Inicialização ──────────────────────────────────────────────────
+(function init() {
+  // Restaura sessão salva
+  try {
+    var t = localStorage.getItem(LS_TOKEN);
+    var o = localStorage.getItem(LS_OPERADOR);
+    if (t) { estado.token = t; $('campo-token').value = t; }
+    if (o) { estado.operador = o; $('campo-operador').value = o; }
+  } catch (e) {}
+
+  verificarConexao();
+
+  // Se já tem token salvo, tenta entrar direto
+  if (estado.token && estado.operador) {
+    chamarAPI({ acao: 'eventos', token: estado.token })
+      .then(function(r) {
+        if (r && r.ok) {
+          setConexao('online');
+          preencherEventos(r.eventos || []);
+          $('etapa-auth').classList.add('oculto');
+          $('etapa-operacao').classList.remove('oculto');
+        }
+      })
+      .catch(function() {});
+  }
+})();
+</script>
+</body>
+</html>
